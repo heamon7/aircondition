@@ -172,4 +172,3 @@ class Console(object):
 #     a.raw_input()
 #     a.show()
 #     a.room_temp()
-              

@@ -1,12 +1,13 @@
 from flask import Flask, request, jsonify
+from werkzeug.serving import WSGIRequestHandler
 import requests
 import threading
 import time
 from control import Console
 app = Flask(__name__)
 # all_client = {{"room"="A15", "ID"="123456789012344567"},{"room"="A16", "ID"="123456789012344567"}}
-server_addr = 'http://localhost:9997'
-
+server_addr = 'http://10.128.230.43:9997'
+s = requests.Session()
 console = Console()
 
 
@@ -101,7 +102,7 @@ def send_start_wind():
         payload = {"type": "startwind",
                    "desttemp": console.show_args['goal_temp'],
                    "velocity": console.show_args['wind_v']}
-        requests.post(url=server_addr, data=payload)
+        s.post(url=server_addr, data=payload)
         print('发送送风请求\n')
 
 
@@ -111,7 +112,7 @@ def send_stop_wind():
     :return:
     """
     payload = {"type": "stopwind"}
-    requests.post(url=server_addr, data=payload)
+    s.post(url=server_addr, data=payload)
     print('发送停止送风请求')
 
 
@@ -122,7 +123,7 @@ def send_recurrent_temp():
     """
     threading.Timer(console.show_args['fresh_rate'], send_recurrent_temp).start()
     payload = {"type": "temp", "temp": console.show_args['recurrent_temp']}
-    requests.post(url=server_addr, data=payload)
+    s.post(url=server_addr, data=payload)
 
 
 @async_no_sleep
@@ -173,7 +174,7 @@ def send_temp(recurrent_temp=35):
     :return:
     """
     payload = {"type": "temp", "temp": recurrent_temp}
-    requests.post(url=server_addr, data=payload)
+    s.post(url=server_addr, data=payload)
 
 
 @async_no_sleep
@@ -183,8 +184,9 @@ def send_auth():
     :return:
     """
     payload = {"type": "auth", "room": "A15", "ID": "123456789012344567"}
-    requests.post(url=server_addr, data=payload)
+    s.post(url=server_addr, data=payload)
 
 if __name__ == "__main__":
     send_temp()
-    app.run(host='localhost', port=9998)
+    WSGIRequestHandler.protocol_version = "HTTP/1.1"
+    app.run(host='10.28.202.250', port=9998)
