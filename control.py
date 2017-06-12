@@ -1,5 +1,21 @@
 import time
 import threading
+import json
+
+def receiver_thread(rec_socket, queue):
+    ip_port = rec_socket.getpeername()
+    received = ""
+    while True:
+        try:
+            received = received + rec_socket.recv(1024).decode("UTF-8")
+        except:
+            break
+        index = received.find("}")
+        while index != -1:
+            message = received[0:index + 1]
+            queue.put((ip_port, message))
+            received = received[index + 1:-1]
+            index = received.find("}")
 
 
 class Console(object):
@@ -166,9 +182,17 @@ class Console(object):
                 self.adjust_temp(input_1=input_2[1])
 
 
-# if __name__ == '__main__':
-#     a = Console()
-#     a.set_args(goal_temp=-1, wind_v='HIGH', recurrent_temp=35, pattern='COLD', fresh_rate=6, state=1, kwh=0, bill=0)
-#     a.raw_input()
-#     a.show()
-#     a.room_temp()
+class Queue(object):
+    def __init__(self):
+        self.queue = list()
+
+    def put(self, message):
+        self.queue.append(message)
+
+    def async_task(func):
+        def wrapper(self):
+            # time.sleep(1)
+            thread = threading.Thread(target=func, args=(self, ))
+            thread.start()
+        return wrapper
+

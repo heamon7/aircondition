@@ -9,6 +9,7 @@ app = Flask(__name__)
 all_client = {'A15': {"room": "A15", "ID": "123456789012344567"},
               'A16': {"room": "A16", "ID": "123456789012344567"}}
 
+
 class CentralAir:
     def __init__(self):
         self.all_data = {

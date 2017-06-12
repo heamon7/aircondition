@@ -4,14 +4,20 @@ import requests
 import threading
 import time
 from control import Console
-app = Flask(__name__)
-# all_client = {{"room"="A15", "ID"="123456789012344567"},{"room"="A16", "ID"="123456789012344567"}}
-server_addr = 'http://10.128.230.43:9997'
-s = requests.Session()
+import socket
+import json
+# 创建一个socket:
+s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+# 建立连接:
+server_addr = '10.128.230.43'
+s.connect((server_addr, 6666))
+
+
+# s = requests.Session()
 console = Console()
 
 
-@app.route("/", methods=['GET', 'POST'])
+# @app.route("/", methods=['GET', 'POST'])
 def server():
     print("client started")
     print(str(request.values))
@@ -102,7 +108,10 @@ def send_start_wind():
         payload = {"type": "startwind",
                    "desttemp": console.show_args['goal_temp'],
                    "velocity": console.show_args['wind_v']}
-        s.post(url=server_addr, data=payload)
+        # s.post(url=server_addr, data=payload)
+        my_writer_obj = s.makefile(mode='w')
+        my_writer_obj.write(json.dumps(payload))
+        my_writer_obj.flush()
         print('发送送风请求\n')
 
 
@@ -174,7 +183,11 @@ def send_temp(recurrent_temp=35):
     :return:
     """
     payload = {"type": "temp", "temp": recurrent_temp}
-    s.post(url=server_addr, data=payload)
+    # s.post(url=server_addr, data=payload)
+    my_writer_obj = s.makefile(mode='w')
+    my_writer_obj.write(json.dumps(payload))
+    my_writer_obj.flush()
+    # s.send((payload))
 
 
 @async_no_sleep
@@ -188,5 +201,16 @@ def send_auth():
 
 if __name__ == "__main__":
     send_temp()
-    WSGIRequestHandler.protocol_version = "HTTP/1.1"
-    app.run(host='10.28.202.250', port=9998)
+    # 接收数据:
+    buffer = []
+    d = s.recv(1024).decode('utf-8')
+    print(d)
+    print(1)
+    # while True:
+    #     # 每次最多接收1k字节:
+    #     d = s.recv(1024).decode('utf-8')
+    #     if d:
+    #         buffer.append(d)
+    #     else:
+    #         break
+    # print(buffer)
