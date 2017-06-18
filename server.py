@@ -5,10 +5,17 @@ import collections
 from copy import deepcopy
 import random, socket, threading
 import json
+from pymongo import MongoClient
+
+
 app = Flask(__name__)
 
-all_client = {'A15': {"room": "A15", "ID": "123456789012344567"},
-              'A16': {"room": "A16", "ID": "123456789012344567"}}
+all_client = {
+    '6': {"room": "6", "ID": "6"},
+    '7': {"room": "7", "ID": "7"},
+    '8': {"room": "8", "ID": "8"},
+    '9': {"room": "9", "ID": "9"},
+    '10': {"room": "10", "ID": "10"}}
 
 class CentralAir:
     def __init__(self):
@@ -36,13 +43,15 @@ class CentralAir:
             }
         }
 
-        default_mode = 'COLD'  # 默认工作模式
+        default_mode = 'HOT'  # 默认工作模式
         default_refresh_rate = 5  # 默认刷新频率
 
         self.start()  # 主控开机
         self.set_mode(default_mode)
         self.set_refresh_rate(default_refresh_rate)
 
+        self.client = MongoClient('aliyun.yuanzhe.me', 27017)
+        self.db = self.client.aircondition
         # self.tcp_server()
 
     def start(self):
@@ -75,12 +84,12 @@ class CentralAir:
             self.all_data['working_mode'] = mode
             self.all_data['min_temp'] = 25
             self.all_data['max_temp'] = 30
-            self.all_data['temp'] = 28
+            self.all_data['temp'] = 30
         elif mode == 'COLD':
             self.all_data['working_mode'] = mode
             self.all_data['min_temp'] = 18
             self.all_data['max_temp'] = 25
-            self.all_data['temp'] = 22
+            self.all_data['temp'] = 18
 
     def set_refresh_rate(self, refresh_rate=3):
         self.all_data['refresh_rate'] = refresh_rate
@@ -133,8 +142,12 @@ class CentralAir:
 
     def tcp_send_mode(self, client_addr,client_status):
         # client_addr = self.get_client_addr(client_host)
+
+
         client_socket = self.all_data['clients'][client_status][client_addr]['client_socket']
         payload = {"type": "mode", "workingmode": self.all_data['working_mode'], "defaulttemp": self.all_data['temp']}
+        room = self.all_data['clients'][client_status][client_addr]['room']
+        print(room+': ','tcp_send_mode: ', payload)
         client_socket.send(json.dumps(payload).encode('utf-8'))
         server(client_socket,client_addr)
 
@@ -224,7 +237,8 @@ class CentralAir:
             bill = 0
         client_socket = self.all_data['clients'][client_status][client_addr]['client_socket']
         payload = {"type": "bill", "kwh": kwh, "bill": bill}
-        print('send_bill payload: ', payload)
+        room = self.all_data['clients']['onservice'][client_addr]['room']
+        print(room+': ','send_bill payload: ', payload)
         client_socket.send(json.dumps(payload).encode('utf-8'))
         server(client_socket,client_addr)
 
@@ -295,8 +309,16 @@ class CentralAir:
 
         self.send_none_wind(client_host)
         client_data = self.all_data['clients']['onservice'][client_host]
+
         self.all_data['log_list'].append((client_host, deepcopy(client_data)))
 
+        room = self.all_data['clients']['onservice'][client_addr]['room']
+        log_data = deepcopy(client_data)
+        log_data['log_time'] = time.time()
+        with open(room+'.txt', 'w+') as f:
+            f.write(deepcopy(client_data))
+
+        self.db.log_list.insert_one(deepcopy(client_data))
         client_data['last_start_time'] = None
 
         self.all_data['clients']['offservice'][client_host] = client_data
@@ -345,7 +367,9 @@ class CentralAir:
 
 def tcp_server():
     #tcp server
-    TCP_IP = '172.20.10.7'
+    # TCP_IP = '192.168.43.128'
+    TCP_IP = '192.168.43.128'
+
     TCP_PORT = 6666
     BUFFER_SIZE  = 1024
 
@@ -387,7 +411,20 @@ def server(ss , addr):
     client_host = str(addr)
     # client_addr = 'http://'+str(client_host)+':9998'
     # print(client_addr)
-    print(request_values)
+    # room = centralAir.all_data['clients']['onservice'][client_host]['room']
+    try:
+        room = centralAir.all_data['clients']['onservice'][client_host]['room']
+
+    except Exception as e :
+        try:
+            room = centralAir.all_data['clients']['offservice'][client_host]['room']
+        except Exception as e :
+            try:
+                room = centralAir.all_data['clients']['waitingservice'][client_host]['room']
+            except Exception as e :
+                room = client_host
+
+    print(room+': ', request_values)
     response_text = 1
     # 只要接收过从控，那么会一直发送 temp
     if request_type == 'temp':
@@ -396,6 +433,7 @@ def server(ss , addr):
 
         # 如果是第一次收到该从机的温度信息
         if client_host not in centralAir.all_data['clients']['onservice'] and client_host not in centralAir.all_data['clients']['offservice'] and client_host not in centralAir.all_data['clients']['waitingservice']:
+            log_status = 'first_connected'  # 第一次连接
             client_pre_status = 'stopwind'
             # 如果主控处于待机状态，那么设置其为工作状态
             if centralAir.is_standby():
@@ -405,7 +443,7 @@ def server(ss , addr):
                     'client_socket':ss,
                     'client_addr': addr,
                     'temp': client_temp,
-                    'room': None,
+                    'room': client_host,
                     'ID': None,
                     'is_auth': False,
                     'start_wind': False,
@@ -430,13 +468,17 @@ def server(ss , addr):
             #     centralAir.all_data['clients']['waitingservice'][client_host] = client_data
             #     response_text = 'Serving up to 3 climent, you are in the waiting list'
         # 如果不是第一次接收到温度信息（从控可能已经发送了 stopwind,从控可能处于 onservice 或 offservice 或 waitingservice）
+
         # 处于 onservice
         elif client_host in centralAir.all_data['clients']['onservice']:
             client_pre_status = centralAir.all_data['clients']['onservice'][client_host]['client_status']
             centralAir.all_data['clients']['onservice'][client_host]['client_pre_status'] = client_pre_status
             centralAir.all_data['clients']['onservice'][client_host]['client_status'] = request_type
             centralAir.all_data['clients']['onservice'][client_host]['temp'] = client_temp
-            print('client: ',request_type, 'onservice')
+
+            room = centralAir.all_data['clients']['onservice'][client_host]['room']
+            print(room+': ',request_type, 'onservice')
+
             centralAir.tcp_send_bill(client_host, client_status='onservice')
 
         # 处于 offservice
@@ -467,46 +509,61 @@ def server(ss , addr):
 
     # 出现在 第一次 temp ,然后 refreshrate 之后，此时 client 应该处于 offservice
     elif request_type == 'auth':
-        client_room = request_values.get('room', None)
-        client_id = request_values.get('ID', None)
-        # print(client_room, client_id)
-        # 如果从控在 offservice
-        if client_host in centralAir.all_data['clients']['offservice']:
-            centralAir.all_data['clients']['offservice'][client_host]['room'] = client_room
-            centralAir.all_data['clients']['offservice'][client_host]['client_status'] = request_type
-            # 暂时不做实际的认证授权，只是存储起来
-            centralAir.all_data['clients']['offservice'][client_host]['ID'] = client_id
+        client_room = str(request_values.get('room', None))
+        client_id = str(request_values.get('id', None))
 
-            client_pre_status = centralAir.all_data['clients']['offservice'][client_host]['client_status']
-            centralAir.all_data['clients']['offservice'][client_host]['client_pre_status'] = client_pre_status
-            centralAir.all_data['clients']['offservice'][client_host]['client_status'] = request_type
-            centralAir.tcp_send_mode(client_host, client_status='offservice')
 
-        # if client_host in centralAir.all_data['clients']['onservice']:
-        #     centralAir.all_data['clients']['onservice'][client_host]['room'] = client_room
-        #     centralAir.all_data['clients']['onservice'][client_host]['client_status'] = request_type
-        #     # 暂时不做实际的认证授权，只是存储起来
-        #     centralAir.all_data['clients']['onservice'][client_host]['ID'] = client_id
-        #     centralAir.send_mode(client_host)
-        #
-        #     client_pre_status = centralAir.all_data['clients']['onservice'][client_host]['client_status']
-        #     centralAir.all_data['clients']['onservice'][client_host]['client_pre_status'] = client_pre_status
-        #     centralAir.all_data['clients']['onservice'][client_host]['client_status'] = request_type
+        # if not client_id:
+        #     print('small id')
+        #     client_id = str(request_values.get('id', None))
 
-            audit_log = {
-                'client_host': client_host,
-                'client_pre_status': client_pre_status,
-                'request_type': request_type,
-                'client_room': client_room,
-                'client_id': client_id,
-                'request_time': time.time()
-            }
-            centralAir.all_data['audit_list'].append(audit_log)
+
+        if client_room in all_client.keys() and client_id == all_client[client_room]['ID']:
+            # print(client_room, client_id)
+            # 如果从控在 offservice
+            if client_host in centralAir.all_data['clients']['offservice']:
+                centralAir.all_data['clients']['offservice'][client_host]['room'] = client_room
+                centralAir.all_data['clients']['offservice'][client_host]['client_status'] = request_type
+                # 暂时不做实际的认证授权，只是存储起来
+                centralAir.all_data['clients']['offservice'][client_host]['ID'] = client_id
+
+                client_pre_status = centralAir.all_data['clients']['offservice'][client_host]['client_status']
+                centralAir.all_data['clients']['offservice'][client_host]['client_pre_status'] = client_pre_status
+                centralAir.all_data['clients']['offservice'][client_host]['client_status'] = request_type
+                centralAir.tcp_send_mode(client_host, client_status='offservice')
+
+            # if client_host in centralAir.all_data['clients']['onservice']:
+            #     centralAir.all_data['clients']['onservice'][client_host]['room'] = client_room
+            #     centralAir.all_data['clients']['onservice'][client_host]['client_status'] = request_type
+            #     # 暂时不做实际的认证授权，只是存储起来
+            #     centralAir.all_data['clients']['onservice'][client_host]['ID'] = client_id
+            #     centralAir.send_mode(client_host)
+            #
+            #     client_pre_status = centralAir.all_data['clients']['onservice'][client_host]['client_status']
+            #     centralAir.all_data['clients']['onservice'][client_host]['client_pre_status'] = client_pre_status
+            #     centralAir.all_data['clients']['onservice'][client_host]['client_status'] = request_type
+
+                audit_log = {
+                    'client_host': client_host,
+                    'client_pre_status': client_pre_status,
+                    'request_type': request_type,
+                    'client_room': client_room,
+                    'client_id': client_id,
+                    'request_time': time.time()
+                }
+                centralAir.all_data['audit_list'].append(audit_log)
+            else:
+                print('error','auth', client_room, client_id)
+                client_status = 'offservice'
+                client_socket = centralAir.all_data['clients'][client_status][client_host]['client_socket']
+                server(client_socket,client_host)
 
     # 两种情况, 1. offservice  2. onservice
     elif request_type == 'startwind':
         dest_temp = request_values.get('desttemp', None)
         velocity = request_values.get('velocity', None)
+        if velocity:
+            velocity = velocity.upper()
         print(dest_temp, velocity)
         print(centralAir.all_data['clients'])
         # 如果从控是 offservice
